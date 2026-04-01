@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from 'react'
-import type { ChangeEvent, FormEvent } from 'react'
+import type { FormEvent } from 'react'
 import { hasSupabaseEnv, supabase } from './lib/supabase'
 import './App.css'
 
@@ -8,20 +8,22 @@ type SwipeDirection = 'like' | 'pass'
 type Gender = 'male' | 'female'
 
 type Profile = {
-  id: string
-  telegram_id: string
-  full_name: string
-  gender: Gender
+  id: number
+  tg_id: string
+  username: string
+  first_name: string
   class_name: string
+  gender: Gender
   height_cm: number
   bio: string
-  photo_url: string | null
+  is_active: boolean
+  photo_url?: string | null
 }
 
 type Match = {
-  id: string
-  profile_a_id: string
-  profile_b_id: string
+  id: number
+  user_a: string
+  user_b: string
 }
 
 type TelegramUser = {
@@ -51,7 +53,6 @@ const defaultDraft = {
   class_name: '',
   height_cm: 170,
   bio: '',
-  photo_url: '',
 }
 
 const genderLabels: Record<Gender, string> = {
@@ -82,18 +83,32 @@ function isValidGraduationClass(value: string): boolean {
   return /^12[ABCDEKLFM]$/.test(value)
 }
 
+function profileDisplayName(profile: Profile): string {
+  const fromFirstName = profile.first_name?.trim()
+  if (fromFirstName) {
+    return fromFirstName
+  }
+
+  const fromUsername = profile.username?.trim()
+  if (fromUsername) {
+    return fromUsername.startsWith('@') ? fromUsername : `@${fromUsername}`
+  }
+
+  return profile.tg_id
+}
+
 function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [activeTab, setActiveTab] = useState<AppTab>('discover')
   const [telegramUser, setTelegramUser] = useState<TelegramUser | null>(null)
+  const [myTgId, setMyTgId] = useState('')
   const [myProfile, setMyProfile] = useState<Profile | null>(null)
   const [candidates, setCandidates] = useState<Profile[]>([])
   const [matches, setMatches] = useState<Profile[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
   const [savingProfile, setSavingProfile] = useState(false)
   const [swiping, setSwiping] = useState(false)
-  const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [touchStartX, setTouchStartX] = useState<number | null>(null)
   const [dragX, setDragX] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
@@ -101,15 +116,14 @@ function App() {
   const [draft, setDraft] = useState(defaultDraft)
 
   const currentCandidate = useMemo(() => {
-    if (!myProfile) {
+    if (!myTgId) {
       return null
     }
     return candidates[currentIndex] ?? null
-  }, [candidates, currentIndex, myProfile])
+  }, [candidates, currentIndex, myTgId])
 
   const swipeIntent: SwipeDirection | null = dragX > 0 ? 'like' : dragX < 0 ? 'pass' : null
   const swipePower = Math.min(Math.abs(dragX) / SWIPE_TRIGGER_PX, 1)
-
   const cardTransform = `translateX(${dragX}px) rotate(${dragX / 22}deg)`
 
   useEffect(() => {
@@ -124,7 +138,7 @@ function App() {
     setIsDragging(false)
     setTouchStartX(null)
     setCardTransitionEnabled(false)
-  }, [currentCandidate?.id])
+  }, [currentCandidate?.tg_id])
 
   async function initialize() {
     if (!hasSupabaseEnv || !supabase) {
@@ -136,11 +150,12 @@ function App() {
     const tgUser = getTelegramUser()
     setTelegramUser(tgUser)
     const telegramId = tgUser?.id?.toString() ?? getOrCreateDevTelegramId()
+    setMyTgId(telegramId)
 
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('*')
-      .eq('telegram_id', telegramId)
+      .eq('tg_id', telegramId)
       .maybeSingle<Profile>()
 
     if (profileError) {
@@ -159,37 +174,37 @@ function App() {
 
     setMyProfile(profile)
     setDraft({
-      full_name: profile.full_name,
+      full_name: profile.first_name || profile.username || '',
       gender: profile.gender,
       class_name: profile.class_name,
       height_cm: profile.height_cm,
       bio: profile.bio,
-      photo_url: profile.photo_url ?? '',
     })
 
-    await Promise.all([loadCandidates(profile.id), loadMatches(profile.id)])
+    await Promise.all([loadCandidates(telegramId), loadMatches(telegramId)])
     setLoading(false)
   }
 
-  async function loadCandidates(profileId: string) {
+  async function loadCandidates(telegramId: string) {
     if (!supabase) return
 
     const { data: swipedRows, error: swipedError } = await supabase
       .from('swipes')
-      .select('to_profile_id')
-      .eq('from_profile_id', profileId)
+      .select('to_tg_id')
+      .eq('from_tg_id', telegramId)
 
     if (swipedError) {
       setError(swipedError.message)
       return
     }
 
-    const excludedIds = new Set((swipedRows ?? []).map((row) => row.to_profile_id as string))
+    const excludedIds = new Set((swipedRows ?? []).map((row) => row.to_tg_id as string))
 
     const { data: profileRows, error: candidatesError } = await supabase
       .from('profiles')
       .select('*')
-      .neq('id', profileId)
+      .eq('is_active', true)
+      .neq('tg_id', telegramId)
       .limit(100)
       .returns<Profile[]>()
 
@@ -198,18 +213,18 @@ function App() {
       return
     }
 
-    const notSwiped = (profileRows ?? []).filter((candidate) => !excludedIds.has(candidate.id))
+    const notSwiped = (profileRows ?? []).filter((candidate) => !excludedIds.has(candidate.tg_id))
     setCandidates(notSwiped)
     setCurrentIndex(0)
   }
 
-  async function loadMatches(profileId: string) {
+  async function loadMatches(telegramId: string) {
     if (!supabase) return
 
     const { data: matchRows, error: matchesError } = await supabase
       .from('matches')
       .select('*')
-      .or(`profile_a_id.eq.${profileId},profile_b_id.eq.${profileId}`)
+      .or(`user_a.eq.${telegramId},user_b.eq.${telegramId}`)
       .returns<Match[]>()
 
     if (matchesError) {
@@ -218,7 +233,7 @@ function App() {
     }
 
     const partnerIds = (matchRows ?? []).map((match) =>
-      match.profile_a_id === profileId ? match.profile_b_id : match.profile_a_id,
+      match.user_a === telegramId ? match.user_b : match.user_a,
     )
 
     if (!partnerIds.length) {
@@ -229,7 +244,7 @@ function App() {
     const { data: partnerProfiles, error: partnersError } = await supabase
       .from('profiles')
       .select('*')
-      .in('id', partnerIds)
+      .in('tg_id', partnerIds)
       .returns<Profile[]>()
 
     if (partnersError) {
@@ -243,7 +258,7 @@ function App() {
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    if (!supabase) return
+    if (!supabase || !myTgId) return
 
     const trimmedName = draft.full_name.trim()
     const normalizedClass = draft.class_name.trim().toUpperCase().replace(/\s+/g, '')
@@ -269,108 +284,37 @@ function App() {
     setSavingProfile(true)
     setError('')
 
-    const tgId = telegramUser?.id?.toString() ?? getOrCreateDevTelegramId()
     const payload = {
-      telegram_id: tgId,
-      full_name: trimmedName,
-      gender: draft.gender,
+      tg_id: myTgId,
+      username: telegramUser?.username ?? myProfile?.username ?? '',
+      first_name: trimmedName,
       class_name: normalizedClass,
+      gender: draft.gender,
       height_cm: Math.round(draft.height_cm),
       bio: trimmedBio,
-      photo_url: draft.photo_url || null,
+      is_active: true,
     }
 
-    if (myProfile) {
-      const { data, error: updateError } = await supabase
-        .from('profiles')
-        .update(payload)
-        .eq('id', myProfile.id)
-        .select('*')
-        .single<Profile>()
-
-      if (updateError) {
-        setError(updateError.message)
-        setSavingProfile(false)
-        return
-      }
-
-      setMyProfile(data)
-      setSavingProfile(false)
-      return
-    }
-
-    const { data, error: createError } = await supabase
+    const { data, error: upsertError } = await supabase
       .from('profiles')
-      .insert(payload)
+      .upsert(payload, { onConflict: 'tg_id' })
       .select('*')
       .single<Profile>()
 
-    if (createError) {
-      setError(createError.message)
+    if (upsertError) {
+      setError(upsertError.message)
       setSavingProfile(false)
       return
     }
 
     setMyProfile(data)
-    await Promise.all([loadCandidates(data.id), loadMatches(data.id)])
+    await Promise.all([loadCandidates(myTgId), loadMatches(myTgId)])
     setSavingProfile(false)
     setActiveTab('discover')
   }
 
-  async function uploadPhoto(event: ChangeEvent<HTMLInputElement>) {
-    if (!supabase) {
-      return
-    }
-
-    const file = event.target.files?.[0]
-
-    if (!file) {
-      return
-    }
-
-    if (!file.type.startsWith('image/')) {
-      window.alert('Можно загружать только изображения.')
-      event.target.value = ''
-      return
-    }
-
-    const maxSizeMb = 5
-    if (file.size > maxSizeMb * 1024 * 1024) {
-      window.alert('Фото слишком большое. Максимум 5 MB.')
-      event.target.value = ''
-      return
-    }
-
-    setUploadingPhoto(true)
-    setError('')
-
-    const tgId = telegramUser?.id?.toString() ?? getOrCreateDevTelegramId()
-    const extension = file.name.split('.').pop()?.toLowerCase() ?? 'jpg'
-    const filePath = `${tgId}/${Date.now()}.${extension}`
-
-    const { error: uploadError } = await supabase.storage
-      .from('profile-photos')
-      .upload(filePath, file, { upsert: false })
-
-    if (uploadError) {
-      setError(uploadError.message)
-      window.alert('Не удалось загрузить фото. Проверь bucket profile-photos и его policy в Supabase.')
-      setUploadingPhoto(false)
-      event.target.value = ''
-      return
-    }
-
-    const {
-      data: { publicUrl },
-    } = supabase.storage.from('profile-photos').getPublicUrl(filePath)
-
-    setDraft((prev) => ({ ...prev, photo_url: publicUrl }))
-    setUploadingPhoto(false)
-    event.target.value = ''
-  }
-
   async function swipe(direction: SwipeDirection) {
-    if (!myProfile || !currentCandidate || !supabase || swiping) {
+    if (!myTgId || !currentCandidate || !supabase || swiping) {
       return
     }
 
@@ -379,11 +323,11 @@ function App() {
 
     const { error: swipeError } = await supabase.from('swipes').upsert(
       {
-        from_profile_id: myProfile.id,
-        to_profile_id: currentCandidate.id,
-        direction,
+        from_tg_id: myTgId,
+        to_tg_id: currentCandidate.tg_id,
+        action: direction,
       },
-      { onConflict: 'from_profile_id,to_profile_id' },
+      { onConflict: 'from_tg_id,to_tg_id' },
     )
 
     if (swipeError) {
@@ -396,9 +340,9 @@ function App() {
       const { data: reciprocalLike, error: reciprocalError } = await supabase
         .from('swipes')
         .select('id')
-        .eq('from_profile_id', currentCandidate.id)
-        .eq('to_profile_id', myProfile.id)
-        .eq('direction', 'like')
+        .eq('from_tg_id', currentCandidate.tg_id)
+        .eq('to_tg_id', myTgId)
+        .eq('action', 'like')
         .maybeSingle()
 
       if (reciprocalError) {
@@ -406,19 +350,19 @@ function App() {
       }
 
       if (reciprocalLike) {
-        const [profileA, profileB] = [myProfile.id, currentCandidate.id].sort()
+        const [userA, userB] = [myTgId, currentCandidate.tg_id].sort()
         const { error: matchInsertError } = await supabase.from('matches').upsert(
           {
-            profile_a_id: profileA,
-            profile_b_id: profileB,
+            user_a: userA,
+            user_b: userB,
           },
-          { onConflict: 'profile_a_id,profile_b_id' },
+          { onConflict: 'user_a,user_b' },
         )
 
         if (matchInsertError) {
           setError(matchInsertError.message)
         } else {
-          await loadMatches(myProfile.id)
+          await loadMatches(myTgId)
         }
       }
     }
@@ -426,7 +370,7 @@ function App() {
     const nextIndex = currentIndex + 1
 
     if (nextIndex >= candidates.length) {
-      await loadCandidates(myProfile.id)
+      await loadCandidates(myTgId)
     } else {
       setCurrentIndex(nextIndex)
     }
@@ -502,7 +446,7 @@ function App() {
         <div>
           <p className="eyebrow">Waltzbot</p>
           <h1>Выпускной вальс</h1>
-          <p className="subtitle">Найди пару с помощью свайпов, как в Tinder.</p>
+          <p className="subtitle">Найди пару с помощью свайпов</p>
         </div>
       </header>
 
@@ -546,26 +490,6 @@ function App() {
                 placeholder="Например: Амирали Сеитов"
               />
             </label>
-
-            <label>
-              Фото профиля
-              <input
-                type="file"
-                accept="image/*"
-                onChange={(event) => void uploadPhoto(event)}
-                disabled={uploadingPhoto || savingProfile}
-              />
-            </label>
-
-            {draft.photo_url && (
-              <img
-                className="profile-photo-preview"
-                src={draft.photo_url}
-                alt="Превью фото профиля"
-              />
-            )}
-
-            {uploadingPhoto && <p className="upload-note">Загружаем фото...</p>}
 
             <div className="row-2">
               <label>
@@ -669,12 +593,12 @@ function App() {
                 <img
                   className="candidate-photo"
                   src={currentCandidate.photo_url}
-                  alt={`Фото ${currentCandidate.full_name}`}
+                  alt={`Фото ${profileDisplayName(currentCandidate)}`}
                 />
               )}
               <div className="card-gradient" />
               <p className="badge">{currentCandidate.class_name}</p>
-              <h3>{currentCandidate.full_name}</h3>
+              <h3>{profileDisplayName(currentCandidate)}</h3>
               <p className="meta">
                 {genderLabels[currentCandidate.gender]} · {currentCandidate.height_cm} см
               </p>
@@ -720,15 +644,15 @@ function App() {
                     <img
                       className="match-avatar"
                       src={match.photo_url}
-                      alt={`Фото ${match.full_name}`}
+                      alt={`Фото ${profileDisplayName(match)}`}
                     />
                   ) : (
                     <div className="match-avatar placeholder" aria-hidden="true">
-                      {match.full_name.slice(0, 1).toUpperCase()}
+                      {profileDisplayName(match).slice(0, 1).toUpperCase()}
                     </div>
                   )}
                   <div>
-                    <h3>{match.full_name}</h3>
+                    <h3>{profileDisplayName(match)}</h3>
                     <p>
                       {match.class_name} · {match.height_cm} см · {genderLabels[match.gender]}
                     </p>
@@ -741,11 +665,6 @@ function App() {
         </section>
       )}
 
-      {!telegramUser && (
-        <p className="dev-note">
-          Режим разработки: мини-апп открыт вне Telegram, используется локальный ID.
-        </p>
-      )}
     </main>
   )
 }

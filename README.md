@@ -36,48 +36,69 @@ Configured in `.env`:
 Run this in Supabase SQL editor:
 
 ```sql
-create table if not exists profiles (
-  id uuid primary key default gen_random_uuid(),
-  telegram_id text unique not null,
-  full_name text not null,
-  gender text not null check (gender in ('male', 'female')),
+drop table if exists public.matches;
+drop table if exists public.swipes;
+drop table if exists public.profiles;
+
+create table if not exists public.profiles (
+  id bigint generated always as identity primary key,
+  tg_id text not null unique,
+  username text default '',
+  first_name text default '',
   class_name text not null,
-  height_cm int not null check (height_cm between 120 and 240),
-  bio text not null,
-  photo_url text,
-  created_at timestamptz not null default now()
-);
-
-alter table profiles add column if not exists photo_url text;
-
-create table if not exists swipes (
-  id uuid primary key default gen_random_uuid(),
-  from_profile_id uuid not null references profiles(id) on delete cascade,
-  to_profile_id uuid not null references profiles(id) on delete cascade,
-  direction text not null check (direction in ('like', 'pass')),
+  gender text not null check (gender in ('male', 'female')),
+  height_cm integer not null check (height_cm >= 120 and height_cm <= 230),
+  bio text default '',
+  is_active boolean not null default true,
   created_at timestamptz not null default now(),
-  unique (from_profile_id, to_profile_id)
+  updated_at timestamptz not null default now()
 );
 
-create table if not exists matches (
-  id uuid primary key default gen_random_uuid(),
-  profile_a_id uuid not null references profiles(id) on delete cascade,
-  profile_b_id uuid not null references profiles(id) on delete cascade,
+create table if not exists public.swipes (
+  id bigint generated always as identity primary key,
+  from_tg_id text not null,
+  to_tg_id text not null,
+  action text not null check (action in ('like', 'pass')),
   created_at timestamptz not null default now(),
-  unique (profile_a_id, profile_b_id)
+  updated_at timestamptz not null default now(),
+  unique (from_tg_id, to_tg_id)
 );
 
-insert into storage.buckets (id, name, public)
-values ('profile-photos', 'profile-photos', true)
-on conflict (id) do nothing;
+create table if not exists public.matches (
+  id bigint generated always as identity primary key,
+  user_a text not null,
+  user_b text not null,
+  created_at timestamptz not null default now(),
+  unique (user_a, user_b)
+);
 
-create policy "public read profile photos"
-on storage.objects for select
-using (bucket_id = 'profile-photos');
+create index if not exists idx_profiles_active on public.profiles (is_active);
+create index if not exists idx_swipes_from on public.swipes (from_tg_id);
+create index if not exists idx_swipes_to on public.swipes (to_tg_id);
+create index if not exists idx_matches_user_a on public.matches (user_a);
+create index if not exists idx_matches_user_b on public.matches (user_b);
 
-create policy "authenticated upload profile photos"
-on storage.objects for insert
-with check (bucket_id = 'profile-photos');
+create or replace function public.set_updated_at()
+returns trigger as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_profiles_updated_at on public.profiles;
+create trigger trg_profiles_updated_at
+before update on public.profiles
+for each row execute function public.set_updated_at();
+
+drop trigger if exists trg_swipes_updated_at on public.swipes;
+create trigger trg_swipes_updated_at
+before update on public.swipes
+for each row execute function public.set_updated_at();
+
+alter table public.profiles disable row level security;
+alter table public.swipes disable row level security;
+alter table public.matches disable row level security;
 ```
 
 For quick MVP/testing, disable RLS on these tables or create policies that allow access for your app users.
