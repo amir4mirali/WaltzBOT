@@ -71,9 +71,37 @@ function normalizeUsername(value: string): string {
   return value.trim().replace(/^@+/, '').toLowerCase()
 }
 
+function getUsernameFromTelegramQueryPayload(): string {
+  const params = new URLSearchParams(window.location.search)
+  const encodedWebAppData = params.get('tgWebAppData')
+
+  if (!encodedWebAppData) {
+    return ''
+  }
+
+  try {
+    const payload = new URLSearchParams(encodedWebAppData)
+    const rawUser = payload.get('user')
+
+    if (!rawUser) {
+      return ''
+    }
+
+    const parsed = JSON.parse(rawUser) as { username?: string }
+    return parsed.username ? normalizeUsername(parsed.username) : ''
+  } catch {
+    return ''
+  }
+}
+
 function resolveIdentityUsername(user: TelegramUser | null): string {
   if (user?.username) {
     return normalizeUsername(user.username)
+  }
+
+  const fromTelegramPayload = getUsernameFromTelegramQueryPayload()
+  if (fromTelegramPayload) {
+    return fromTelegramPayload
   }
 
   const params = new URLSearchParams(window.location.search)
@@ -235,7 +263,7 @@ function App() {
       if (tgUser && !tgUser.username) {
         setError('У твоего Telegram аккаунта не задан username. Добавь username в настройках Telegram и открой мини-апп снова.')
       } else {
-        setError('Невозможно определить username. Открой мини-апп через Telegram или передай ?username=... в URL.')
+        setError('Невозможно определить username. Открой мини-апп кнопкой web_app из Telegram или передай ?username=... в URL.')
       }
       setNeedsManualUsername(true)
       setLoading(false)
