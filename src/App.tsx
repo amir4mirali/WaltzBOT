@@ -67,19 +67,6 @@ function getTelegramUser(): TelegramUser | null {
   return window.Telegram?.WebApp?.initDataUnsafe?.user ?? null
 }
 
-function getOrCreateDevTelegramId(): string {
-  const key = 'waltzbot_dev_telegram_id'
-  const fromStorage = localStorage.getItem(key)
-
-  if (fromStorage) {
-    return fromStorage
-  }
-
-  const generated = `dev_${Math.floor(Math.random() * 1_000_000_000)}`
-  localStorage.setItem(key, generated)
-  return generated
-}
-
 function resolveTelegramId(user: TelegramUser | null): string {
   const params = new URLSearchParams(window.location.search)
   const urlTgId =
@@ -88,7 +75,6 @@ function resolveTelegramId(user: TelegramUser | null): string {
     params.get('telegram_id')?.trim()
 
   if (urlTgId) {
-    localStorage.setItem('waltzbot_dev_telegram_id', urlTgId)
     return urlTgId
   }
 
@@ -96,7 +82,7 @@ function resolveTelegramId(user: TelegramUser | null): string {
     return user.id.toString()
   }
 
-  return getOrCreateDevTelegramId()
+  return ''
 }
 
 function isValidGraduationClass(value: string): boolean {
@@ -204,6 +190,13 @@ function App() {
     const tgUser = getTelegramUser()
     setTelegramUser(tgUser)
     const telegramId = resolveTelegramId(tgUser)
+
+    if (!telegramId) {
+      setError('Невозможно определить Telegram ID. Открой мини-апп через Telegram или передай ?tg_id=... в URL.')
+      setLoading(false)
+      return
+    }
+
     setMyTgId(telegramId)
 
     const { data: profile, error: profileError } = await supabase
@@ -427,7 +420,13 @@ function App() {
       return
     }
 
-    const tgId = myTgId || telegramUser?.id?.toString() || getOrCreateDevTelegramId()
+    if (!myTgId) {
+      window.alert('Невозможно загрузить фото без Telegram ID. Открой мини-апп через Telegram.')
+      event.target.value = ''
+      return
+    }
+
+    const tgId = myTgId
     const extension = file.name.split('.').pop()?.toLowerCase() ?? 'jpg'
     const filePath = `${tgId}/${Date.now()}.${extension}`
 
