@@ -80,6 +80,20 @@ function getOrCreateDevTelegramId(): string {
   return generated
 }
 
+function resolveTelegramId(user: TelegramUser | null): string {
+  if (user?.id) {
+    return user.id.toString()
+  }
+
+  const urlTgId = new URLSearchParams(window.location.search).get('tg_id')?.trim()
+  if (urlTgId) {
+    localStorage.setItem('waltzbot_dev_telegram_id', urlTgId)
+    return urlTgId
+  }
+
+  return getOrCreateDevTelegramId()
+}
+
 function isValidGraduationClass(value: string): boolean {
   return /^12[ABCDEKLFM]$/.test(value)
 }
@@ -183,7 +197,7 @@ function App() {
 
     const tgUser = getTelegramUser()
     setTelegramUser(tgUser)
-    const telegramId = tgUser?.id?.toString() ?? getOrCreateDevTelegramId()
+    const telegramId = resolveTelegramId(tgUser)
     setMyTgId(telegramId)
 
     const { data: profile, error: profileError } = await supabase
