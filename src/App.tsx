@@ -359,6 +359,8 @@ function App() {
 
     if (!supabase || !myIdentity) return
 
+    const sb = supabase
+
     const trimmedName = draft.full_name.trim()
     const normalizedClass = draft.class_name.trim().toUpperCase().replace(/\s+/g, '')
     const trimmedBio = draft.bio.trim()
@@ -395,21 +397,60 @@ function App() {
       photo_url: draft.photo_url || null,
     }
 
-    const { data, error: upsertError } = await supabase
-      .from('profiles')
-      .upsert(payload, { onConflict: 'username' })
-      .select('*')
-      .single<Profile>()
+    const persistProfile = async (
+      profilePayload: Omit<typeof payload, 'photo_url'> & { photo_url?: string | null },
+    ): Promise<{ data: Profile | null; errorMessage: string | null }> => {
+      const { data: existingRows, error: existingError } = await sb
+        .from('profiles')
+        .select('id')
+        .eq('username', myIdentity)
+        .order('id', { ascending: false })
+        .limit(1)
+        .returns<Array<{ id: number }>>()
 
-    let savedProfile = data
+      if (existingError) {
+        return { data: null, errorMessage: existingError.message }
+      }
 
-    if (upsertError) {
+      if (existingRows && existingRows.length > 0) {
+        const { data: updatedRow, error: updateError } = await sb
+          .from('profiles')
+          .update(profilePayload)
+          .eq('id', existingRows[0].id)
+          .select('*')
+          .single<Profile>()
+
+        if (updateError) {
+          return { data: null, errorMessage: updateError.message }
+        }
+
+        return { data: updatedRow, errorMessage: null }
+      }
+
+      const { data: insertedRow, error: insertError } = await sb
+        .from('profiles')
+        .insert(profilePayload)
+        .select('*')
+        .single<Profile>()
+
+      if (insertError) {
+        return { data: null, errorMessage: insertError.message }
+      }
+
+      return { data: insertedRow, errorMessage: null }
+    }
+
+    const persisted = await persistProfile(payload)
+
+    let savedProfile = persisted.data
+
+    if (persisted.errorMessage) {
       const photoUrlMissingColumn = /column\s+"?photo_url"?\s+of\s+relation\s+"?profiles"?\s+does\s+not\s+exist/i.test(
-        upsertError.message,
+        persisted.errorMessage,
       )
 
       if (!photoUrlMissingColumn) {
-        setError(upsertError.message)
+        setError(persisted.errorMessage)
         setSavingProfile(false)
         return
       }
@@ -425,19 +466,15 @@ function App() {
         is_active: true,
       }
 
-      const { data: fallbackData, error: fallbackError } = await supabase
-        .from('profiles')
-        .upsert(fallbackPayload, { onConflict: 'username' })
-        .select('*')
-        .single<Profile>()
+      const fallbackPersisted = await persistProfile(fallbackPayload)
 
-      if (fallbackError) {
-        setError(fallbackError.message)
+      if (fallbackPersisted.errorMessage) {
+        setError(fallbackPersisted.errorMessage)
         setSavingProfile(false)
         return
       }
 
-      savedProfile = fallbackData
+      savedProfile = fallbackPersisted.data
       setError('Фото загружено, но колонка photo_url отсутствует в таблице profiles. Добавь ее в SQL.')
     }
 
