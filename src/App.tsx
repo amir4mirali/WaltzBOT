@@ -81,14 +81,19 @@ function getOrCreateDevTelegramId(): string {
 }
 
 function resolveTelegramId(user: TelegramUser | null): string {
-  if (user?.id) {
-    return user.id.toString()
-  }
+  const params = new URLSearchParams(window.location.search)
+  const urlTgId =
+    params.get('tg_id')?.trim() ||
+    params.get('tgId')?.trim() ||
+    params.get('telegram_id')?.trim()
 
-  const urlTgId = new URLSearchParams(window.location.search).get('tg_id')?.trim()
   if (urlTgId) {
     localStorage.setItem('waltzbot_dev_telegram_id', urlTgId)
     return urlTgId
+  }
+
+  if (user?.id) {
+    return user.id.toString()
   }
 
   return getOrCreateDevTelegramId()
@@ -157,6 +162,7 @@ function App() {
   const [savingProfile, setSavingProfile] = useState(false)
   const [swiping, setSwiping] = useState(false)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [photoStatus, setPhotoStatus] = useState('')
   const [touchStartX, setTouchStartX] = useState<number | null>(null)
   const [dragX, setDragX] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
@@ -427,6 +433,7 @@ function App() {
 
     setUploadingPhoto(true)
     setError('')
+    setPhotoStatus('')
 
     const { error: uploadError } = await supabase.storage
       .from('profile-photos')
@@ -436,7 +443,7 @@ function App() {
       try {
         const dataUrl = await fileToCompressedDataUrl(file)
         setDraft((prev) => ({ ...prev, photo_url: dataUrl }))
-        setError('Storage недоступен, фото сохранено локально в базе (data URL fallback).')
+        setPhotoStatus('Storage недоступен, фото сохранено через fallback.')
         setUploadingPhoto(false)
         event.target.value = ''
         return
@@ -458,6 +465,7 @@ function App() {
     } = supabase.storage.from('profile-photos').getPublicUrl(filePath)
 
     setDraft((prev) => ({ ...prev, photo_url: publicUrl }))
+    setPhotoStatus('Фото успешно загружено.')
     setUploadingPhoto(false)
     event.target.value = ''
   }
@@ -660,6 +668,9 @@ function App() {
             )}
 
             {uploadingPhoto && <p className="upload-note">Загружаем фото...</p>}
+            {photoStatus && <p className="upload-status">{photoStatus}</p>}
+
+            <p className="identity-note">Текущий ID: {myTgId}</p>
 
             <div className="row-2">
               <label>

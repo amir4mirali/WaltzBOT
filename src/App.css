@@ -207,10 +207,22 @@ textarea {
   font-size: 0.86rem;
 }
 
+.upload-status {
+  margin: 0;
+  color: #2f5d78;
+  font-size: 0.84rem;
+}
+
 .upload-hint {
   margin: 0;
   font-size: 0.84rem;
   color: #5f7284;
+}
+
+.identity-note {
+  margin: 2px 0 0;
+  font-size: 0.78rem;
+  color: #6d7f90;
 }
 
 .candidate-card {
