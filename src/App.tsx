@@ -98,6 +98,38 @@ function profileDisplayName(profile: Profile): string {
   return profile.tg_id
 }
 
+async function fileToCompressedDataUrl(file: File): Promise<string> {
+  const imageUrl = URL.createObjectURL(file)
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => resolve(img)
+      img.onerror = () => reject(new Error('Не удалось прочитать изображение.'))
+      img.src = imageUrl
+    })
+
+    const maxSide = 1200
+    const scale = Math.min(1, maxSide / Math.max(image.width, image.height))
+    const width = Math.max(1, Math.round(image.width * scale))
+    const height = Math.max(1, Math.round(image.height * scale))
+
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+
+    const context = canvas.getContext('2d')
+    if (!context) {
+      throw new Error('Canvas недоступен для обработки фото.')
+    }
+
+    context.drawImage(image, 0, 0, width, height)
+    return canvas.toDataURL('image/jpeg', 0.82)
+  } finally {
+    URL.revokeObjectURL(imageUrl)
+  }
+}
+
 function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -387,11 +419,24 @@ function App() {
       .upload(filePath, file, { upsert: false })
 
     if (uploadError) {
-      setError(uploadError.message)
-      window.alert('Не удалось загрузить фото. Проверь bucket profile-photos и его policy в Supabase.')
-      setUploadingPhoto(false)
-      event.target.value = ''
-      return
+      try {
+        const dataUrl = await fileToCompressedDataUrl(file)
+        setDraft((prev) => ({ ...prev, photo_url: dataUrl }))
+        setError('Storage недоступен, фото сохранено локально в базе (data URL fallback).')
+        setUploadingPhoto(false)
+        event.target.value = ''
+        return
+      } catch (fallbackError) {
+        const fallbackMessage =
+          fallbackError instanceof Error
+            ? fallbackError.message
+            : 'Неизвестная ошибка обработки фото.'
+        setError(`${uploadError.message}. ${fallbackMessage}`)
+        window.alert('Не удалось загрузить фото ни в Storage, ни fallback-способом.')
+        setUploadingPhoto(false)
+        event.target.value = ''
+        return
+      }
     }
 
     const {
