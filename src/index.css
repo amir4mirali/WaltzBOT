@@ -1,0 +1,31 @@
+﻿:root {
+  font-family: 'Sora', 'Manrope', 'Segoe UI', sans-serif;
+  line-height: 1.45;
+  font-weight: 500;
+  color: #1f272d;
+  background:
+    radial-gradient(1200px 700px at 8% -10%, #ffe6c4 0%, transparent 64%),
+    radial-gradient(1000px 600px at 105% 0%, #d5f0ff 0%, transparent 62%),
+    linear-gradient(170deg, #f7fcff 0%, #edf6f0 48%, #fff8f1 100%);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: transparent;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
