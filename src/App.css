@@ -169,6 +169,30 @@ textarea {
   resize: vertical;
 }
 
+.photo-input {
+  border: 1px dashed #8ab0cc;
+  background: linear-gradient(180deg, #f6fbff, #eef6fd);
+  color: #2a4a63;
+  cursor: pointer;
+}
+
+.photo-input::file-selector-button {
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(130deg, #4f8ec4, #5f72d8);
+  color: #fff;
+  padding: 8px 12px;
+  margin-right: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.photo-preview-frame {
+  border-radius: 18px;
+  padding: 8px;
+  background: linear-gradient(145deg, #d9eaff, #ffe0e4);
+}
+
 .profile-photo-preview {
   width: 100%;
   max-height: 260px;
@@ -181,6 +205,12 @@ textarea {
   margin: 0;
   color: #4f6274;
   font-size: 0.86rem;
+}
+
+.upload-hint {
+  margin: 0;
+  font-size: 0.84rem;
+  color: #5f7284;
 }
 
 .candidate-card {

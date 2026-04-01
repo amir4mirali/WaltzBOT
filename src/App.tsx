@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { ChangeEvent, FormEvent } from 'react'
 import { hasSupabaseEnv, supabase } from './lib/supabase'
 import './App.css'
 
@@ -53,6 +53,7 @@ const defaultDraft = {
   class_name: '',
   height_cm: 170,
   bio: '',
+  photo_url: '',
 }
 
 const genderLabels: Record<Gender, string> = {
@@ -109,6 +110,7 @@ function App() {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [savingProfile, setSavingProfile] = useState(false)
   const [swiping, setSwiping] = useState(false)
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [touchStartX, setTouchStartX] = useState<number | null>(null)
   const [dragX, setDragX] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
@@ -179,6 +181,7 @@ function App() {
       class_name: profile.class_name,
       height_cm: profile.height_cm,
       bio: profile.bio,
+      photo_url: profile.photo_url ?? '',
     })
 
     await Promise.all([loadCandidates(telegramId), loadMatches(telegramId)])
@@ -293,6 +296,7 @@ function App() {
       height_cm: Math.round(draft.height_cm),
       bio: trimmedBio,
       is_active: true,
+      photo_url: draft.photo_url || null,
     }
 
     const { data, error: upsertError } = await supabase
@@ -301,16 +305,102 @@ function App() {
       .select('*')
       .single<Profile>()
 
+    let savedProfile = data
+
     if (upsertError) {
-      setError(upsertError.message)
-      setSavingProfile(false)
-      return
+      const photoUrlMissingColumn = /column\s+"?photo_url"?\s+of\s+relation\s+"?profiles"?\s+does\s+not\s+exist/i.test(
+        upsertError.message,
+      )
+
+      if (!photoUrlMissingColumn) {
+        setError(upsertError.message)
+        setSavingProfile(false)
+        return
+      }
+
+      const fallbackPayload = {
+        tg_id: myTgId,
+        username: telegramUser?.username ?? myProfile?.username ?? '',
+        first_name: trimmedName,
+        class_name: normalizedClass,
+        gender: draft.gender,
+        height_cm: Math.round(draft.height_cm),
+        bio: trimmedBio,
+        is_active: true,
+      }
+
+      const { data: fallbackData, error: fallbackError } = await supabase
+        .from('profiles')
+        .upsert(fallbackPayload, { onConflict: 'tg_id' })
+        .select('*')
+        .single<Profile>()
+
+      if (fallbackError) {
+        setError(fallbackError.message)
+        setSavingProfile(false)
+        return
+      }
+
+      savedProfile = fallbackData
+      setError('Фото загружено, но колонка photo_url отсутствует в таблице profiles. Добавь ее в SQL.')
     }
 
-    setMyProfile(data)
+    setMyProfile(savedProfile)
     await Promise.all([loadCandidates(myTgId), loadMatches(myTgId)])
     setSavingProfile(false)
     setActiveTab('discover')
+  }
+
+  async function uploadPhoto(event: ChangeEvent<HTMLInputElement>) {
+    if (!supabase) {
+      return
+    }
+
+    const file = event.target.files?.[0]
+
+    if (!file) {
+      return
+    }
+
+    if (!file.type.startsWith('image/')) {
+      window.alert('Можно загружать только изображения.')
+      event.target.value = ''
+      return
+    }
+
+    const maxSizeMb = 5
+    if (file.size > maxSizeMb * 1024 * 1024) {
+      window.alert('Фото слишком большое. Максимум 5 MB.')
+      event.target.value = ''
+      return
+    }
+
+    const tgId = myTgId || telegramUser?.id?.toString() || getOrCreateDevTelegramId()
+    const extension = file.name.split('.').pop()?.toLowerCase() ?? 'jpg'
+    const filePath = `${tgId}/${Date.now()}.${extension}`
+
+    setUploadingPhoto(true)
+    setError('')
+
+    const { error: uploadError } = await supabase.storage
+      .from('profile-photos')
+      .upload(filePath, file, { upsert: false })
+
+    if (uploadError) {
+      setError(uploadError.message)
+      window.alert('Не удалось загрузить фото. Проверь bucket profile-photos и его policy в Supabase.')
+      setUploadingPhoto(false)
+      event.target.value = ''
+      return
+    }
+
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from('profile-photos').getPublicUrl(filePath)
+
+    setDraft((prev) => ({ ...prev, photo_url: publicUrl }))
+    setUploadingPhoto(false)
+    event.target.value = ''
   }
 
   async function swipe(direction: SwipeDirection) {
@@ -490,6 +580,27 @@ function App() {
                 placeholder="Например: Амирали Сеитов"
               />
             </label>
+
+            <label>
+              Фото профиля
+              <input
+                className="photo-input"
+                type="file"
+                accept="image/*"
+                onChange={(event) => void uploadPhoto(event)}
+                disabled={uploadingPhoto || savingProfile}
+              />
+            </label>
+
+            {draft.photo_url ? (
+              <div className="photo-preview-frame">
+                <img className="profile-photo-preview" src={draft.photo_url} alt="Превью фото профиля" />
+              </div>
+            ) : (
+              <p className="upload-hint">Добавь фото, чтобы анкета выглядела заметнее в ленте.</p>
+            )}
+
+            {uploadingPhoto && <p className="upload-note">Загружаем фото...</p>}
 
             <div className="row-2">
               <label>
